@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: drp-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: drp_user
+      POSTGRES_PASSWORD: drp_password
+      POSTGRES_DB: drp_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - drp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U drp_user -d drp_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile.backend
+    container_name: drp-backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://drp_user:drp_password@postgres:5432/drp_db?schema=public
+      JWT_SECRET: drp-super-secret-jwt-key-2026-production-ready-security
+      FRONTEND_URL: http://localhost:3000
+      CONNECTOR_API_KEY: drp-connector-api-key-safe-2026
+    ports:
+      - '4000:4000'
+    volumes:
+      - drp_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile.frontend
+    container_name: drp-frontend
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api
+    ports:
+      - '3000:3000'
+
+volumes:
+  drp_pgdata:
+  drp_uploads:

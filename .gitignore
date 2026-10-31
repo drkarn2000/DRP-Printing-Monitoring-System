@@ -1,0 +1,41 @@
+# Node modules
+node_modules/
+*/node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.env
+*.local
+DrpLocalPg2026
+pwfile.txt
+
+# Build outputs
+dist/
+*/dist/
+.next/
+*/.next/
+out/
+*/out/
+build/
+*/build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Vercel
+.vercel
+
+# Uploads and temporary data
+uploads/
+*/uploads/
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db

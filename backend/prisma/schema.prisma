@@ -1,0 +1,488 @@
+// DRP Printing Monitoring System - Prisma Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum RoleType {
+  ADMIN
+  OPERATOR
+  SUPERVISOR
+}
+
+enum JobPriority {
+  NORMAL
+  URGENT
+}
+
+enum JobStatus {
+  PENDING
+  PRINTING
+  COMPLETED
+  OVERRUN
+  CANCELLED
+}
+
+enum MachineStatus {
+  LIVE
+  IDLE
+  ERROR
+  OFFLINE
+}
+
+enum EventState {
+  MATCHED
+  UNMATCHED
+  DUPLICATE_BLOCKED
+}
+
+enum MovementType {
+  PURCHASE
+  USAGE
+  OPENING_STOCK
+  ADJUSTMENT
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  name         String
+  role         RoleType    @default(OPERATOR)
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  action      String
+  subject     String
+  description String?
+  roles       RolePermission[]
+
+  @@unique([action, subject])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Customer {
+  id        String          @id @default(uuid())
+  name      String
+  dealer    String?
+  contact   String?
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  jobs      ProductionJob[]
+  artworks  ArtworkFile[]
+
+  @@map("customers")
+}
+
+model Machine {
+  id               String            @id // e.g. 'M01', 'M02', ...
+  name             String
+  model            String
+  vendor           String
+  software         String
+  pilot            Boolean           @default(false)
+  status           MachineStatus     @default(IDLE)
+  outputToday      Int               @default(0)
+  totalOutput      Int               @default(0)
+  utilizationPct   Int               @default(0)
+  currentJobId     String?
+  lastHeartbeatAt  DateTime?
+  integrationNotes String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  softwareList     MachineSoftware[]
+  connectors       ConnectorDevice[]
+  productionJobs   ProductionJob[]
+  printJobs        PrintJob[]
+  machineEvents    MachineEvent[]
+  printHistory     PrintHistory[]
+  inkHeads         InkHead[]
+
+  @@map("machines")
+}
+
+model MachineSoftware {
+  id               String   @id @default(uuid())
+  machineId        String
+  ripSoftware      String
+  printingSoftware String
+  adapterName      String
+  configJson       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  machine          Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@map("machine_software")
+}
+
+model ConnectorDevice {
+  id              String        @id @default(uuid())
+  deviceName      String
+  ipAddress       String
+  macAddress      String?
+  hostname        String?
+  machineId       String?
+  version         String        @default("1.0.0")
+  status          MachineStatus @default(OFFLINE)
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  machine         Machine?      @relation(fields: [machineId], references: [id])
+
+  @@map("connector_devices")
+}
+
+model ProductionJob {
+  id              String               @id // e.g. 'DRP-26084'
+  customerId      String?
+  customerName    String
+  dealer          String?
+  artworkName     String
+  artworkFile     String
+  artworkImage    String               // MANDATORY image data URL or storage path
+  requiredQty     Int
+  producedQty     Int                  @default(0)
+  verifiedGoodQty Int                  @default(0)
+  wastedQty       Int                  @default(0)
+  machineId       String
+  dimensions      String?
+  priority        JobPriority          @default(NORMAL)
+  status          JobStatus            @default(PENDING)
+  notes           String?
+  format          String               @default("TIFF")
+  inkConsumedL    Float                @default(0)
+  materialCost    Float                @default(0)
+  inkCost         Float                @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  customer        Customer?            @relation(fields: [customerId], references: [id])
+  machine         Machine              @relation(fields: [machineId], references: [id])
+  printJobs       PrintJob[]
+  events          MachineEvent[]
+  printHistory    PrintHistory[]
+  consumptions    JobConsumption[]
+  costs           JobCost[]
+  wastageRecords  WastageRecord[]
+
+  @@map("production_jobs")
+}
+
+model ArtworkFile {
+  id            String    @id @default(uuid())
+  filename      String
+  originalName  String
+  mimeType      String
+  sizeBytes     Int
+  storagePath   String
+  thumbnailUrl  String
+  dimensions    String?
+  resolutionDpi String?
+  format        String
+  customerId    String?
+  createdAt     DateTime  @default(now())
+
+  customer      Customer? @relation(fields: [customerId], references: [id])
+
+  @@map("artwork_files")
+}
+
+model PrintJob {
+  id              String         @id @default(uuid())
+  productionJobId String
+  machineId       String
+  prnFile         String
+  dpi             String         @default("720 × 1800")
+  dimensions      String         @default("10 × 4 ft")
+  xCopies         Int            @default(1)
+  yCopies         Int            @default(1)
+  plannedCopies   Int            @default(1) // Automatically x * y
+  status          String         @default("Loaded") // Loaded, Printing, Finished, Cancelled
+  progressPct     Int            @default(0)
+  loadedAt        DateTime       @default(now())
+  actualTime      DateTime?
+  recordText      String?
+  productionJob   ProductionJob  @relation(fields: [productionJobId], references: [id], onDelete: Cascade)
+  machine         Machine        @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  events          MachineEvent[]
+
+  @@map("print_jobs")
+}
+
+model MachineEvent {
+  id              String        @id @default(uuid())
+  eventKey        String        @unique // Idempotency fingerprint to prevent duplicate increments
+  machineId       String
+  eventType       String
+  filename        String
+  productionJobId String?
+  printJobId      String?
+  rawPayload      String?
+  qtySignal       String?
+  verification    String        @default("Physical output unverified")
+  state           EventState    @default(MATCHED)
+  timestamp       DateTime      @default(now())
+
+  machine         Machine        @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  productionJob   ProductionJob? @relation(fields: [productionJobId], references: [id])
+  printJob        PrintJob?      @relation(fields: [printJobId], references: [id])
+
+  @@map("machine_events")
+}
+
+model PrintHistory {
+  id              String         @id @default(uuid())
+  machineId       String
+  productionJobId String?
+  printJobId      String?
+  filename        String
+  dpi             String
+  dimensions      String
+  xCopies         Int            @default(1)
+  yCopies         Int            @default(1)
+  plannedCopies   Int            @default(1)
+  status          String         // Print Finish, Cancelled, Loaded
+  actualTime      DateTime       @default(now())
+  recordText      String
+  createdAt       DateTime       @default(now())
+
+  machine         Machine        @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  productionJob   ProductionJob? @relation(fields: [productionJobId], references: [id])
+
+  @@map("print_history")
+}
+
+model InkProduct {
+  id           String        @id @default(uuid())
+  name         String        @unique
+  type         String        // 'ink'
+  purchaseQty  Float         @default(0)
+  purchasePrice Float        @default(0)
+  costPerLitre Float         @default(0)
+  supplierId   String?
+  currentStock Float         @default(0)
+  reorderLevel Float         @default(10)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  supplier     Supplier?     @relation(fields: [supplierId], references: [id])
+
+  @@map("ink_products")
+}
+
+model InkHead {
+  id                  String    @id @default(uuid())
+  model               String
+  manufacturer        String
+  purchasePrice       Float
+  installDate         DateTime  @default(now())
+  expectedLifespanSqft Float    @default(500000)
+  usedLifespanSqft    Float     @default(0)
+  costPerSqft         Float     @default(0.1)
+  machineId           String?
+  status              String    @default("Active")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  machine             Machine?  @relation(fields: [machineId], references: [id])
+
+  @@map("ink_heads")
+}
+
+model Material {
+  id            String    @id @default(uuid())
+  name          String    @unique
+  category      String    // 'roll'
+  rollWidthFt   Float?    // 3, 4, 5, 6, 8, 10
+  purchaseQty   Float     @default(0)
+  purchasePrice Float     @default(0)
+  costPerRoll   Float     @default(0)
+  costPerSqft   Float     @default(0)
+  currentStock  Float     @default(0)
+  reorderLevel  Float     @default(3)
+  unit          String    @default("Rolls")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("materials")
+}
+
+model Supplier {
+  id            String        @id @default(uuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  inkProducts   InkProduct[]
+  purchases     Purchase[]
+
+  @@map("suppliers")
+}
+
+model Purchase {
+  id            String         @id @default(uuid())
+  invoiceNumber String?
+  purchaseDate  DateTime       @default(now())
+  supplierId    String?
+  totalAmount   Float          @default(0)
+  notes         String?
+  createdAt     DateTime       @default(now())
+
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  items         PurchaseItem[]
+
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id          String   @id @default(uuid())
+  purchaseId  String
+  itemName    String
+  itemType    String   // INK, MATERIAL, HEAD
+  quantity    Float
+  unitCost    Float
+  totalCost   Float
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_items")
+}
+
+model InventoryTransaction {
+  id              String       @id @default(uuid())
+  itemName        String
+  category        String       // ink, roll
+  movementType    MovementType
+  quantity        Float
+  unit            String
+  unitCost        Float        @default(0)
+  referenceNumber String?
+  notes           String?
+  timestamp       DateTime     @default(now())
+
+  @@map("inventory_transactions")
+}
+
+model JobConsumption {
+  id                String        @id @default(uuid())
+  productionJobId   String
+  materialName      String?
+  materialUsedSqft  Float         @default(0)
+  materialCost      Float         @default(0)
+  inkType           String?
+  inkUsedLiters     Float         @default(0)
+  inkCost           Float         @default(0)
+  headDepreciation  Float         @default(0)
+  recordedAt        DateTime      @default(now())
+
+  productionJob     ProductionJob @relation(fields: [productionJobId], references: [id], onDelete: Cascade)
+
+  @@map("job_consumptions")
+}
+
+model JobCost {
+  id               String        @id @default(uuid())
+  productionJobId  String
+  materialCost     Float
+  inkCost          Float
+  headUsageCost    Float         @default(0)
+  totalCost        Float         // materialCost + inkCost + headUsageCost
+  wastagePieces    Int           @default(0)
+  wastageAmount    Float         @default(0)
+  costPerGoodPiece Float         @default(0)
+  isEstimated      Boolean       @default(true)
+  calculatedAt     DateTime      @default(now())
+
+  productionJob    ProductionJob @relation(fields: [productionJobId], references: [id], onDelete: Cascade)
+
+  @@map("job_costs")
+}
+
+model WastageRecord {
+  id               String        @id @default(uuid())
+  productionJobId  String
+  wastedQty        Int
+  reason           String?
+  materialCost     Float         @default(0)
+  inkCost          Float         @default(0)
+  headCost         Float         @default(0)
+  totalWastageCost Float         @default(0)
+  reportedBy       String?
+  createdAt        DateTime      @default(now())
+
+  productionJob    ProductionJob @relation(fields: [productionJobId], references: [id], onDelete: Cascade)
+
+  @@map("wastage_records")
+}
+
+model Notification {
+  id          String               @id @default(uuid())
+  type        String               // OVERRUN, OFFLINE, LOW_STOCK, SYSTEM
+  title       String
+  message     String
+  severity    NotificationSeverity @default(INFO)
+  read        Boolean              @default(false)
+  referenceId String?
+  createdAt   DateTime             @default(now())
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  userId        String?
+  action        String
+  entityType    String
+  entityId      String?
+  previousState String?
+  newState      String?
+  ipAddress     String?
+  timestamp     DateTime @default(now())
+
+  user          User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
